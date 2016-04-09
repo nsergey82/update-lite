@@ -1,11 +1,8 @@
-//
-// Created by sergeyn on 09/04/16.
-//
-
 #ifndef UPDATE_LITE_SETTINGS_H
 #define UPDATE_LITE_SETTINGS_H
 
 #include <cstdint>
+#include <vector>
 
 namespace IndexUpdate {
     class Settings {
@@ -14,6 +11,11 @@ namespace IndexUpdate {
         uint64_t updateBufferPostingsLimit;
         uint64_t  updatesQuant;
         uint64_t  quieriesQuant;
+
+        typedef std::vector<uint64_t> dataC;
+        dataC tpMembers;
+        dataC tpUpdates;
+        dataC tpQueries;
     };
 }
 
