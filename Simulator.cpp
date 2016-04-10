@@ -4,16 +4,8 @@
 
 #include <iostream>
 #include <chrono>
-#include <cassert>
-#include <vector>
-#include <memory>
 
 namespace IndexUpdate {
-
-    enum Algorithm {
-        NeverMerge, AlwaysMerge, LogMerge, SkiBased, Prognosticator
-    };
-    const char* AlgNames[] = {"Never", "Always", "Logarithmic", "SkiBased", "Prognosticator"};
 
     class SimulatorIMP {
         const Settings settings;
@@ -26,8 +18,9 @@ namespace IndexUpdate {
         uint64_t totalQs;
         unsigned evictions;
 
-        ReadIO totalReads;
+        ReadIO totalQueryReads;
 
+        ConsolidationStats merges;
         std::vector<TermPack> tpacks;
         std::vector<uint64_t> monolithicSegments;
 
@@ -49,15 +42,13 @@ namespace IndexUpdate {
         void report(Algorithm alg) const;
     };
 
-    void Simulator::simulate(const Settings &settings) {
+    unsigned Simulator::simulate(const Settings &settings) {
         auto start = std::chrono::system_clock::now();
-        std::unique_ptr<SimulatorIMP> simulator(new SimulatorIMP(settings));
-        for(auto alg : {AlwaysMerge})//, LogMerge, SkiBased, Prognosticator} )
-            simulator->execute(alg).report(alg);
+        for(auto alg : {AlwaysMerge, LogMerge}/*SkiBased, Prognosticator}*/ )
+            SimulatorIMP(settings).execute(alg).report(alg);
 
         auto end = std::chrono::system_clock::now();
-        auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-        std::cout << "Done ( " << millis << "ms. )\n";
+        return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     }
 
     SimulatorIMP::SimulatorIMP(const Settings &s) :
@@ -97,7 +88,7 @@ namespace IndexUpdate {
         evictions = totalQs =
         queriesStoppedAt = lastQueryAtPostings = 0;
 
-        totalReads = ReadIO();
+        totalQueryReads = ReadIO();
         auto updates = settings.tpUpdates.begin();
         auto queries = settings.tpQueries.begin();
         auto members = settings.tpMembers.begin();
@@ -112,12 +103,21 @@ namespace IndexUpdate {
     }
 
     void SimulatorIMP::report(Algorithm alg) const{
+        auto totalQueryTime = costIoInMinutes(totalQueryReads,
+                                              settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes);
+        auto mergeTimes = ConsolidationStats::costInMinutes(merges,
+                                              settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes);
+
         std::cout <<
-                AlgNames[alg] << " ==> " <<
+              //  AlgNames[alg] << " ==> " <<
                 " Total-seen-postings: " << totalSeenPostings <<
                 " Total-queries: " << totalQs <<
                 " Evictions: " << evictions <<
-                " Total-reads: " << totalReads <<
+                " Query-reads: " << totalQueryReads <<
+                " Consolidation: " << merges <<
+                " Total-query-minutes: " << totalQueryTime <<
+                " Total-merge-minutes: " << mergeTimes <<
+                " Sum-All: " << totalQueryTime+mergeTimes <<
                 std::endl;
     }
 
@@ -135,7 +135,7 @@ namespace IndexUpdate {
             totalQs += quant;
             //currently RoundRobin -- replace with a discrete distribution
             for(; quant != 0; --quant, queriesStoppedAt = (queriesStoppedAt+1)%tpacks.size()) {
-                   totalReads += tpacks[queriesStoppedAt].query();
+                   totalQueryReads += tpacks[queriesStoppedAt].query();
             }
         }
     }
@@ -155,9 +155,23 @@ namespace IndexUpdate {
             segments.push_back(newPostings);
         }
         //consolidation cost is calc. here...
-
+        monolithicSegments.push_back(postingsInUpdateBuffer);
         totalSeenPostings += postingsInUpdateBuffer;
         postingsInUpdateBuffer = 0;
+
+        auto offset = (alg == LogMerge) ? offsetOfTelescopicMerge(monolithicSegments) :
+                                (monolithicSegments.size() > 1 ? 0 : 1);
+
+        assert(offset<=monolithicSegments.size());
+        if(offset<monolithicSegments.size()-1)
+            merges += consolidateSegments(monolithicSegments, offset);
+        else
+            merges += WriteIO(monolithicSegments.back(),1);
+
+        //fix segment sizes for tpacks (this how we know during queries how many seeks to make)
+        unsigned currentSzAll = monolithicSegments.size();
+        for(auto& tp : tpacks)
+            tp.unsafeGetSegments().resize(currentSzAll);
     }
 
     void SimulatorIMP::evictTPacks(Algorithm alg) {

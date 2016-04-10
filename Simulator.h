@@ -5,7 +5,7 @@ namespace IndexUpdate {
     class Settings;
 
     namespace Simulator {
-        void simulate(const Settings &);
+        unsigned simulate(const Settings &);
     }
 }
 
