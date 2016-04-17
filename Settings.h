@@ -10,9 +10,11 @@ namespace IndexUpdate {
     enum Algorithm {
         NeverMerge, AlwaysMerge, LogMerge, SkiBased, Prognosticator
     };
+    enum DiskType { HD, SSD};
 
     class Settings {
     public:
+        DiskType diskType;
         unsigned ioMBS; //how many MB per second we can read/write
         double ioSeek; //the time to make an average seek (random access latency)
         unsigned szOfPostingBytes; //we use fixed size of postings (in bytes).
@@ -32,6 +34,7 @@ namespace IndexUpdate {
         dataC tpQueries;
 
         static size_t hash(const Settings& s);
+        static const std::string& name(Algorithm alg);
     };
 
     bool operator==(const Settings& lhs, const Settings& rhs) ;

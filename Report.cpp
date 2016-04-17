@@ -1,9 +1,6 @@
 #include "Report.h"
 
 namespace IndexUpdate {
-
-    const char* AlgNames[] = {"Never", "Always", "Logarithmic", "SkiBased", "Prognosticator"};
-
     //manipulators: fix the settings and alg
     Report& Report::operator<<(const Settings& settings) {
         return *this;

@@ -28,4 +28,13 @@ namespace IndexUpdate {
             lhs.quieriesQuant == rhs.quieriesQuant ;
     }
 
+    const std::string& Settings::name(Algorithm alg) {
+        static const std::string names[] = {"Never-Merge",
+                                            "AlwaysMerge",
+                                            "LogrthMerge",
+                                            "SkiBsdMerge",
+                                            "Prgnstcator"};
+        return names[alg];
+    }
+
 }
