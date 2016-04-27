@@ -56,9 +56,11 @@ namespace IndexUpdate {
             tpTokens += tokens;
             return tpTokens;
         }
+        void reduceTokens(double tokens) { tpTokens -= tokens;}
 
         ReadIO query() {
-            assert(!tpSegments.empty());
+            if(tpSegments.empty()) //what do you know, no evictions
+                return ReadIO(0,0);
             tpExtraSeeks += tpSegments.size()-1;
             return ReadIO(tpEvictedPostings/tpMembersCount, tpSegments.size());
         };

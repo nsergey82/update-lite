@@ -9,6 +9,9 @@
 
 namespace IndexUpdate {
 
+    void auxRebuildCPrice(std::vector<double> &consolidationPriceVector, const std::vector<size_t>& sizeStack,
+                          const Settings &settings);
+
     class SimulatorIMP {
         const Settings settings;
 
@@ -42,12 +45,35 @@ namespace IndexUpdate {
         void evictTPacks(Algorithm alg);
 
         ConsolidationStats consolidateTPSki(TermPack& tp) {
-            //ski
-            double tokens = tp.convertSeeksToTokens(
-                    costIoInMinutes(ReadIO(0,tp.extraSeeks()),
+            auto segments = tp.segments();
+            ConsolidationStats nil;
+            if(segments.size()<2) {
+                nil += WriteIO(segments.back(), 0); //0 since we write all non-consolidants together
+                return nil;
+            }
+
+            double tokens = tp.convertSeeksToTokens( //exchange seeks for tokens
+                                 costIoInMinutes(ReadIO(0,tp.extraSeeks()),
                                     settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes));
 
+            std::vector<double> consolidationPriceVector;
+            auxRebuildCPrice(consolidationPriceVector, segments, settings);
 
+            auto i = int(consolidationPriceVector.size()-1);
+            while(i>=0 && tokens >= consolidationPriceVector[size_t(i)])
+                --i;
+            unsigned offset = i+1;
+
+            assert(offset<=segments.size());
+            if(offset<segments.size()-1) {
+                auto cons = consolidateSegments(tp.unsafeGetSegments(), offset);
+                tp.reduceTokens(ConsolidationStats::costInMinutes(cons,
+                                                settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes));
+                return cons;
+            }
+
+            nil += WriteIO(segments.back(),0); //0 since we write all non-consolidants together
+            return nil;
         }
 
         ConsolidationStats consolidateTPStatic(TermPack& tp) {
@@ -172,7 +198,7 @@ namespace IndexUpdate {
         while (!bufferFull()) {
             for(auto& tp : tpacks) //round robin
                 postingsInUpdateBuffer += tp.addUBPostings();
-            if(totalSeenPostings + postingsInUpdateBuffer >= settings.totalExperimentPostings)
+            if(finished())
                 break;
         }
     }
@@ -208,10 +234,8 @@ namespace IndexUpdate {
     }
 
     void SimulatorIMP::evictTPacks(Algorithm alg) {
-
-        uint64_t desiredCapacity = 90 * settings.updateBufferPostingsLimit / 100;
+        uint64_t desiredCapacity = settings.percentsUBLeft * settings.updateBufferPostingsLimit / 100;
         //we evict castes with larger ID first
-
         for(auto it = tpacks.rbegin(); postingsInUpdateBuffer > desiredCapacity && it !=tpacks.rend(); ++it)   {
             TermPack& tp = *it;
             auto newPostings = tp.evictAll();
@@ -220,7 +244,7 @@ namespace IndexUpdate {
             totalSeenPostings += newPostings;
             postingsInUpdateBuffer -= newPostings;
 
-            merges += consolidateTPStatic(tp);
+            merges += consolidateTPSki(tp); //consolidateTPStatic(tp);
         }
         assert(postingsInUpdateBuffer <= desiredCapacity);
     }
@@ -240,7 +264,23 @@ namespace IndexUpdate {
     }
 
     bool SimulatorIMP::finished() const {
-        return totalSeenPostings >= settings.totalExperimentPostings;
+        return totalSeenPostings + postingsInUpdateBuffer >= settings.totalExperimentPostings;
+    }
+
+    void auxRebuildCPrice(std::vector<double> &consolidationPriceVector, const std::vector<size_t>& sizeStack,
+                          const Settings &settings) {
+        const int sz = sizeStack.size();
+        assert(sz >= 2);
+
+        consolidationPriceVector.clear();
+        consolidationPriceVector.reserve(sz);
+        for(auto it = sizeStack.begin(); it != sizeStack.end()-1; ++it) {
+            auto cons = kWayConsolidate(it,sizeStack.end());
+            consolidationPriceVector.push_back(
+                    ConsolidationStats::costInMinutes(cons, settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes));
+        }
+        consolidationPriceVector.push_back( //no real consolidation - just a write-back of the last one
+                ConsolidationStats::costInMinutes(ConsolidationStats(0,0,sizeStack.back(),1), settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes));
     }
 
 }

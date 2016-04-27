@@ -19,13 +19,15 @@ namespace IndexUpdate {
         double ioSeek; //the time to make an average seek (random access latency)
         unsigned szOfPostingBytes; //we use fixed size of postings (in bytes).
 
-        //how many postings we are going to accomodate
+        //how many postings we are going to accommodate
         uint64_t totalExperimentPostings;
         //the size of update buffer in postings
         uint64_t updateBufferPostingsLimit;
         //the two quants represent the update-to-query ratio
         uint64_t  updatesQuant; //usually one million
         uint64_t  quieriesQuant;
+
+        unsigned percentsUBLeft; //after eviction can have as much % UB busy (90 is the default)
 
         typedef std::vector<uint64_t> dataC;
         //TPack related data (based on our training set)

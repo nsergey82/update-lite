@@ -99,6 +99,13 @@ namespace IndexUpdate {
     inline std::ostream& operator<<(std::ostream& out, const ConsolidationStats& io) {
         return out << io.reads << ' ' << io.writes;
     }
+
+    //this one doesn't work with <2 segments!
+    template<typename IT>
+    ConsolidationStats kWayConsolidate(IT begin, IT end) {
+        std::vector<uint64_t > segments(begin,end);
+        return consolidateSegments(segments, 0);
+    }
 }
 
 #endif //UPDATE_LITE_CONSOLIDATION_H

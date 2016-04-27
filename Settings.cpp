@@ -14,7 +14,7 @@ namespace IndexUpdate {
             hashMe(s.totalExperimentPostings) ^
             hashMe(s.updateBufferPostingsLimit) ^
             hashMe(s.updatesQuant) ^
-            hashMe(s.quieriesQuant);
+            hashMe(s.quieriesQuant) ^ hashMe(s.percentsUBLeft);
     }
 
     bool operator==(const Settings& lhs, const Settings& rhs) {
@@ -25,7 +25,8 @@ namespace IndexUpdate {
             lhs.totalExperimentPostings == rhs.totalExperimentPostings &&
             lhs.updateBufferPostingsLimit == rhs.updateBufferPostingsLimit &&
             lhs.updatesQuant == rhs.updatesQuant &&
-            lhs.quieriesQuant == rhs.quieriesQuant ;
+            lhs.quieriesQuant == rhs.quieriesQuant &&
+            lhs.percentsUBLeft == rhs.percentsUBLeft;
     }
 
     const std::string& Settings::name(Algorithm alg) {

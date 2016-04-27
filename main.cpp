@@ -12,11 +12,19 @@ IndexUpdate::Settings setup(IndexUpdate::DiskType disk = IndexUpdate::HD, unsign
 void experiment(IndexUpdate::DiskType disk, unsigned queries);
 
 int main(int argc, char** argv) {
-    unsigned queries = (argc>1) ? atoi(argv[1]) : 64;
+    unsigned queries = (argc>1) ? atoi(argv[1]) : 16;
 
+
+//    Settings settings = setup(SSD,queries);
+//    std::vector<Algorithm> algs {SkiBased, LogMerge}; //{AlwaysMerge, LogMerge};
+//    settings.updateBufferPostingsLimit = ((1ull << 31) * 75) / 100;
+//    for(auto s : Simulator::simulate(algs,settings))
+//        std::cout << s << std::endl;
+//    return 0;
+
+//    experiment(SSD,queries); not yet: we need the correct data
+//    std::cout << std::endl;
     experiment(HD, queries);
-    std::cout << std::endl;
-    experiment(SSD,queries);
     std::cout << std::endl;
     std::cin >> argc;
     return 0;
@@ -24,20 +32,37 @@ int main(int argc, char** argv) {
 
 void experiment(IndexUpdate::DiskType disk, unsigned queries){
     Settings settings = setup(disk,queries);
-    std::vector<Algorithm> algs {SkiBased, LogMerge}; //{AlwaysMerge, LogMerge};
+
+    std::vector<Algorithm> ski {SkiBased};
+    std::vector<Algorithm> log { LogMerge};
 
     typedef std::vector<std::string> ReportT;
-
     std::vector<std::future<ReportT>> futuresVec;
 
-    for(auto percents : {96,75,50,32,25,16} ) { //larger percents ==> larger UB ==> less evictions!
+    std::vector<std::string> reports;
+    bool isAsync = true;
+    for(auto percents : {16,32,50,96} ) { //larger percents ==> larger UB ==> less evictions!
         settings.updateBufferPostingsLimit = ((1ull << 31) * percents) / 100;
-        futuresVec.emplace_back(
-                std::async(std::launch::async,Simulator::simulate,
-                           std::cref(algs), settings));
+
+        if(isAsync) {
+            futuresVec.emplace_back(
+                    std::async(std::launch::async, Simulator::simulate,
+                               std::cref(log), settings));
+            for(auto reduceTo : { 4, 16, 32,64,90}) {
+                settings.percentsUBLeft = reduceTo;
+                futuresVec.emplace_back(
+                        std::async(std::launch::async, Simulator::simulate,
+                                   std::cref(ski), settings));
+            }
+
+        }
+        else {
+            auto v = Simulator::simulate({SkiBased,LogMerge},settings);
+            reports.insert(reports.end(),v.begin(),v.end());
+        }
     }
 
-    std::vector<std::string> reports;
+
     for(auto& f : futuresVec) {
         auto v = f.get();
         reports.insert(reports.end(),v.begin(),v.end());
@@ -65,6 +90,7 @@ IndexUpdate::Settings setup(IndexUpdate::DiskType disk, unsigned queriesQuant ) 
     sets.szOfPostingBytes = 4; //we use fixed size of postings (in bytes).
     sets.totalExperimentPostings = 64ull*1000*1000*1000;
     sets.updatesQuant = 1000000;
+    sets.percentsUBLeft = 25;
 
     //for HD
     sets.tpMembers = {
