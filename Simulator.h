@@ -7,6 +7,7 @@ namespace IndexUpdate {
 
     namespace Simulator {
         std::vector<std::string> simulate(const std::vector<Algorithm>& algs, const Settings &);
+        double simulateOne(Algorithm alg, const Settings &);
     }
 }
 

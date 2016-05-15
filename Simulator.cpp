@@ -1,6 +1,7 @@
 #include "Simulator.h"
 #include "Settings.h"
 #include "TermPack.h"
+#include "Landlord.h"
 
 #include <iostream>
 #include <chrono>
@@ -10,7 +11,32 @@
 namespace IndexUpdate {
 
     void auxRebuildCPrice(std::vector<double> &consolidationPriceVector, const std::vector<size_t>& sizeStack,
-                          const Settings &settings);
+                          const Settings &settings, double stopForTokens);
+
+    struct SimulateCache {
+        Caching::Landlord cache;
+        std::vector<std::pair<unsigned, unsigned> > termRanges;
+        std::vector<unsigned> currentPostions;
+
+        explicit SimulateCache(uint64_t cacheSz):
+                cache(cacheSz) {}
+
+        void init(const std::vector<TermPack>& tpacks) {
+            unsigned first = 0;
+            currentPostions.resize(tpacks.size(),0);
+            for(auto it = tpacks.begin(); it != tpacks.end(); ++it) {
+                termRanges.push_back({first,first+it->members()});
+                first = termRanges.back().second+1;
+            }
+        }
+
+        bool visit(unsigned id, uint64_t currentLength) {
+            auto range = termRanges[id];
+            auto term = range.first + currentPostions[id];
+            currentPostions[id] = (currentPostions[id]+1) % (range.second-range.first);
+            return cache.visit(term,currentLength);
+        }
+    };
 
     class SimulatorIMP {
         const Settings settings;
@@ -28,7 +54,7 @@ namespace IndexUpdate {
         ConsolidationStats merges;
         std::vector<TermPack> tpacks;
         std::vector<uint64_t> monolithicSegments;
-
+        SimulateCache cache;
     public:
         SimulatorIMP(const Settings &s);
 
@@ -57,7 +83,7 @@ namespace IndexUpdate {
                                     settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes));
 
             std::vector<double> consolidationPriceVector;
-            auxRebuildCPrice(consolidationPriceVector, segments, settings);
+            auxRebuildCPrice(consolidationPriceVector, segments, settings,tokens);
 
             auto i = int(consolidationPriceVector.size()-1);
             while(i>=0 && tokens >= consolidationPriceVector[size_t(i)])
@@ -89,7 +115,15 @@ namespace IndexUpdate {
         }
 
         std::string report(Algorithm alg) const;
+
+        double getTotalQTime() const;
+        double allTimes() const;
+        double getMergeTimes() const;
     };
+
+    double Simulator::simulateOne(Algorithm alg, const Settings & settings) {
+        return SimulatorIMP(settings).execute(alg).allTimes();
+    }
 
     std::vector<std::string> Simulator::simulate(const std::vector<Algorithm>& algs, const Settings &settings) {
         //auto start = std::chrono::system_clock::now();
@@ -110,7 +144,8 @@ namespace IndexUpdate {
             lastQueryAtPostings(0),
             queriesStoppedAt(0),
             totalQs(0),
-            evictions(0)
+            evictions(0),
+            cache(s.cacheSizePostings)
             {    }
 
     const SimulatorIMP&  SimulatorIMP::execute(Algorithm alg) {
@@ -120,6 +155,7 @@ namespace IndexUpdate {
                 fillUpdateBuffer();
                 handleQueries();
                 evictFromUpdateBuffer(alg);
+                //std::cout << totalSeenPostings << "\n";
             }
         }
         catch (std::exception &e) {
@@ -152,17 +188,19 @@ namespace IndexUpdate {
             tpacks.emplace_back(TermPack(i,*members, *updates, *queries));
         }
         TermPack::normalizeUpdates(tpacks);
+        cache.init(tpacks);
     }
 
+    double SimulatorIMP::allTimes() const { return getTotalQTime()+getMergeTimes(); }
+
     std::string SimulatorIMP::report(Algorithm alg) const{
-        auto totalQueryTime = costIoInMinutes(totalQueryReads,
-                                              settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes);
-        auto mergeTimes = ConsolidationStats::costInMinutes(merges,
-                                              settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes);
+        double totalQueryTime = getTotalQTime();
+        double mergeTimes = getMergeTimes();
 
         std::stringstream strstr;
         strstr <<
                  Settings::name(alg) << " " << (settings.diskType==HD?"HD":"SSD") <<
+                " " << settings.flags[0] << "--" << settings.flags[1] <<
                 " Evictions: " << std::setw(5) << evictions <<
                 " Total-seen-postings: " << totalSeenPostings <<
                 " Total-queries: " << totalQs <<
@@ -173,6 +211,18 @@ namespace IndexUpdate {
                 " Sum-All: " << totalQueryTime+mergeTimes <<
                 std::endl;
         return strstr.str();
+    }
+
+    double SimulatorIMP::getMergeTimes() const {
+        auto mergeTimes = ConsolidationStats::costInMinutes(merges,
+                                                            settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes);
+        return mergeTimes;
+    }
+
+    double SimulatorIMP::getTotalQTime() const {
+        auto totalQueryTime = costIoInMinutes(totalQueryReads,
+                                              settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes);
+        return totalQueryTime;
     }
 
     void SimulatorIMP::handleQueries() {
@@ -189,6 +239,8 @@ namespace IndexUpdate {
             totalQs += quant;
             //currently RoundRobin -- may replace with a discrete distribution
             for(; quant != 0; --quant, queriesStoppedAt = (queriesStoppedAt+1)%tpacks.size()) {
+                bool isMiss = ! cache.visit(queriesStoppedAt,tpacks[queriesStoppedAt].meanDiskLength());
+                if(isMiss)
                    totalQueryReads += tpacks[queriesStoppedAt].query();
             }
         }
@@ -257,6 +309,7 @@ namespace IndexUpdate {
             evictMonoliths(alg);
         else
             evictTPacks(alg);
+        //std::cout << totalSeenPostings << std::endl;
     }
 
     bool SimulatorIMP::bufferFull() const {
@@ -268,19 +321,24 @@ namespace IndexUpdate {
     }
 
     void auxRebuildCPrice(std::vector<double> &consolidationPriceVector, const std::vector<size_t>& sizeStack,
-                          const Settings &settings) {
+                          const Settings &settings, double stopForTokens) {
         const int sz = sizeStack.size();
         assert(sz >= 2);
 
         consolidationPriceVector.clear();
-        consolidationPriceVector.reserve(sz);
-        for(auto it = sizeStack.begin(); it != sizeStack.end()-1; ++it) {
-            auto cons = kWayConsolidate(it,sizeStack.end());
-            consolidationPriceVector.push_back(
-                    ConsolidationStats::costInMinutes(cons, settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes));
+        consolidationPriceVector.resize(sz,std::numeric_limits<float>::max());
+        for(int i = 2; i <=sz; ++i) {
+            auto cons = kWayConsolidate(sizeStack.begin()+(sz-i),sizeStack.end());
+            consolidationPriceVector[sz-i] =
+                    ConsolidationStats::costInMinutes(cons, settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes);
+
+            if(consolidationPriceVector[sz-i] > stopForTokens)
+                break; //no point to calculate the other ones
         }
-        consolidationPriceVector.push_back( //no real consolidation - just a write-back of the last one
-                ConsolidationStats::costInMinutes(ConsolidationStats(0,0,sizeStack.back(),1), settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes));
+        consolidationPriceVector[sz-1] = //no real consolidation - just a write-back of the last one
+                ConsolidationStats::costInMinutes(
+                        ConsolidationStats(0,0,sizeStack.back(),1),
+                          settings.ioMBS, settings.ioSeek, settings.szOfPostingBytes);
     }
 
 }

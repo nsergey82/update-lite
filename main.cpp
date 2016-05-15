@@ -1,32 +1,40 @@
 #include <algorithm>
 #include <iostream>
 #include <future>
+#include <cassert>
 
 #include "Simulator.h"
-#include "Settings.h"
+
 
 using namespace IndexUpdate;
 
 IndexUpdate::Settings setup(IndexUpdate::DiskType disk = IndexUpdate::HD, unsigned queriesQuant = 64 );
 
 void experiment(IndexUpdate::DiskType disk, unsigned queries);
+void findOptimal(IndexUpdate::DiskType disk, unsigned queries);
 
 int main(int argc, char** argv) {
-    unsigned queries = (argc>1) ? atoi(argv[1]) : 16;
-
-
-//    Settings settings = setup(SSD,queries);
-//    std::vector<Algorithm> algs {SkiBased, LogMerge}; //{AlwaysMerge, LogMerge};
-//    settings.updateBufferPostingsLimit = ((1ull << 31) * 75) / 100;
-//    for(auto s : Simulator::simulate(algs,settings))
-//        std::cout << s << std::endl;
-//    return 0;
-
-//    experiment(SSD,queries); not yet: we need the correct data
-//    std::cout << std::endl;
-    experiment(HD, queries);
-    std::cout << std::endl;
-    std::cin >> argc;
+    std::cout.imbue(std::locale(""));
+    if(argc >= 2) {
+        unsigned queriesRate = atoi(argv[1]);
+        for (auto queries : {queriesRate}) {
+            std::cout << "===== > " << queries << " HD...\n";
+            experiment(HD, queries);
+        }
+        for (auto queries : {queriesRate}) {
+            std::cout << "===== > " << queries << " SSD...\n";
+            experiment(SSD, queries);
+        }
+    }
+    else {
+        std::cout << "usage: " << argv[0] << "query-rate(>=1)\n";
+//        assert(argc==3);
+//        auto queries = atoi(argv[1]);
+//        std::string disk(argv[2]);
+//        assert(disk == "HD" || disk == "SSD");
+//        IndexUpdate::DiskType diskT = disk == "HD" ? HD : SSD;
+//        findOptimal(diskT,queries);
+    }
     return 0;
 }
 
@@ -35,6 +43,7 @@ void experiment(IndexUpdate::DiskType disk, unsigned queries){
 
     std::vector<Algorithm> ski {SkiBased};
     std::vector<Algorithm> log { LogMerge};
+    std::vector<Algorithm> alw { AlwaysMerge};
 
     typedef std::vector<std::string> ReportT;
     std::vector<std::future<ReportT>> futuresVec;
@@ -42,14 +51,22 @@ void experiment(IndexUpdate::DiskType disk, unsigned queries){
     std::vector<std::string> reports;
     bool isAsync = true;
     for(auto percents : {16,32,50,96} ) { //larger percents ==> larger UB ==> less evictions!
+        settings.flags[0] = percents;
         settings.updateBufferPostingsLimit = ((1ull << 31) * percents) / 100;
+        settings.cacheSizePostings = (1ull << 31) - settings.updateBufferPostingsLimit;
 
         if(isAsync) {
+            settings.flags[1] = 0;
             futuresVec.emplace_back(
                     std::async(std::launch::async, Simulator::simulate,
                                std::cref(log), settings));
-            for(auto reduceTo : { 4, 16, 32,64,90}) {
+            futuresVec.emplace_back(
+                    std::async(std::launch::async, Simulator::simulate,
+                               std::cref(alw), settings));
+
+            for(auto reduceTo : {25,90}) {
                 settings.percentsUBLeft = reduceTo;
+                settings.flags[1] = reduceTo;
                 futuresVec.emplace_back(
                         std::async(std::launch::async, Simulator::simulate,
                                    std::cref(ski), settings));
@@ -89,107 +106,104 @@ IndexUpdate::Settings setup(IndexUpdate::DiskType disk, unsigned queriesQuant ) 
 
     sets.szOfPostingBytes = 4; //we use fixed size of postings (in bytes).
     sets.totalExperimentPostings = 64ull*1000*1000*1000;
-    sets.updatesQuant = 1000000;
+    sets.updatesQuant = 1000*1000;
     sets.percentsUBLeft = 25;
 
-    //for HD
-    sets.tpMembers = {
-            21,
-            35,
-            50,
-            69,
-            88,
-            109,
-            139,
-            173,
-            213,
-            261,
-            323,
-            401,
-            489,
-            618,
-            838,
-            1206,
-            1776,
-            3208,
-            8213,
-            33396,
-            2262672
-    };
-    /*
-    //1024
-    sets.tpQueries = {
-            384984,
-            378992,
-            376987,
-            377808,
-            380313,
-            375833,
-            379344,
-            376866,
-            379096,
-            377670,
-            377535,
-            377798,
-            376519,
-            376351,
-            377319,
-            377626,
-            377226,
-            378103,
-            378406,
-            379228,
-            378777
-    };
-*/
+    if(IndexUpdate::HD == disk) {
+        //for HD
+        sets.tpMembers = {
+                21,35,50,69,
+                88,109,139,173,
+                213,261,323,401,
+                489,618,838,1206,
+                1776,3208,8213,33396,
+                2262672
+        };
+        //64
+        sets.tpQueries = {
+                24121,23619,23471,23490,
+                23739,23537,23909,23436,
+                23638,23529,23558,23565,
+                23465,23798,23885,23591,
+                23550,23559,23513,23700,
+                23826};
 
-    //64
-    sets.tpQueries = {
-            24121,
-            23619,
-            23471,
-            23490,
-            23739,
-            23537,
-            23909,
-            23436,
-            23638,
-            23529,
-            23558,
-            23565,
-            23465,
-            23798,
-            23885,
-            23591,
-            23550,
-            23559,
-            23513,
-            23700,
-            23826	};
-
-    sets.tpUpdates = {
-            424141246,
-            422228256,
-            420319852,
-            419876347,
-            423493286,
-            419725298,
-            421212817,
-            420285949,
-            421057945,
-            420528111,
-            420271342,
-            419493211,
-            420077546,
-            419777985,
-            419348858,
-            419560157,
-            419308877,
-            419278178,
-            419272221,
-            419296846,
-            419312938,
-    };
-
+        sets.tpUpdates = {
+                424141246,422228256,420319852,419876347,
+                423493286,419725298,421212817,420285949,
+                421057945,420528111,420271342,419493211,
+                420077546,419777985,419348858,419560157,
+                419308877,419278178,419272221,419296846,
+                419312938,
+        };
+    }
+    else {
+        sets.tpQueries = {
+                11782,11566,11459,11292,
+                11286,11110,11094,11304,
+                11035,11024,11243,11176,
+                11192,11143,11217,11185,
+                11003,11021,11299,11217,
+                10985,11152,11039,11157,
+                11119,10987,11101,11003,
+                11288,11245,11276,11299,
+                11092,11029,11088,11129,
+                11121,11066,11057,11009,
+                11202,11239,11134,11326,
+                10948	
+        };
+        sets.tpUpdates = {
+                195705322,196349764,195399697,194151434,
+                190936261,191261649,190209710,192363674,
+                188647608,188619532,188937977,190359610,
+                190364053,189135695,189732419,189071817,
+                190226539,190044871,190089281,189533200,
+                189405216,188879566,188910233,189048263,
+                189482970,189194333,189319583,188629060,
+                189130332,188608975,188784441,188856017,
+                188622468,188843689,188692968,188603141,
+                188582983,188682550,188553502,188609506,
+                188603367,188585978,188573692,188582030,
+                188599756,
+        };
+        sets.tpMembers = {
+                8, 12, 15, 18,
+                21,25,29,34,
+                37,41,46,51,
+                57, 64,71,79,
+                87,96,106,116,
+                128,141,156,174,
+                192,212,231,252,
+                288,328,381,444,
+                532,637,757,924,
+                1213,1704,2583,4273,
+                7605,15724,43332,230072,
+                57503262	
+        };
+    }
     return sets;
+}
+
+
+void findOptimal(IndexUpdate::DiskType disk, unsigned queries){
+    Settings settings = setup(disk,queries);
+    double minTimes =std::numeric_limits<double>::max();
+    std::pair<unsigned,unsigned> bestParams;
+    for(auto percents : {16,96,32,50} ) { //larger percents ==> larger UB ==> less evictions!
+        settings.flags[0] = percents;
+        settings.updateBufferPostingsLimit = ((1ull << 31) * percents) / 100;
+        settings.cacheSizePostings = (1ull << 31) - settings.updateBufferPostingsLimit;
+
+        for(auto reduceTo : { 90,4, 16, 32,64}) {
+            settings.percentsUBLeft = reduceTo;
+            settings.flags[1] = reduceTo;
+            auto totalTimes = Simulator::simulateOne(SkiBased, settings);
+            std::cerr << totalTimes << std::endl;
+            if (totalTimes < minTimes) {
+                bestParams = std::make_pair(percents, reduceTo);
+                minTimes = totalTimes;
+            }
+        }
+    }
+    std::cout << bestParams.first << ' ' << bestParams.second << std::endl;
 }

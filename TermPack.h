@@ -49,6 +49,7 @@ namespace IndexUpdate {
         const std::vector<uint64_t>& segments() const { return tpSegments; }
 
         uint64_t updates() const { return tpEpochUpdates; }
+        uint64_t members() const { return tpMembersCount; }
 
         uint64_t extraSeeks() const { return  tpExtraSeeks; }
         double convertSeeksToTokens(double tokens) {
@@ -62,8 +63,10 @@ namespace IndexUpdate {
             if(tpSegments.empty()) //what do you know, no evictions
                 return ReadIO(0,0);
             tpExtraSeeks += tpSegments.size()-1;
-            return ReadIO(tpEvictedPostings/tpMembersCount, tpSegments.size());
+            return ReadIO(meanDiskLength(), tpSegments.size());
         };
+
+        uint64_t  meanDiskLength() const { return tpEvictedPostings/tpMembersCount; }
 
         static void normalizeUpdates(std::vector<TermPack> &tpacks, double reduceTo = 1<<14);
     };
