@@ -13,21 +13,28 @@ IndexUpdate::Settings setup(IndexUpdate::DiskType disk = IndexUpdate::HD, unsign
 void experiment(IndexUpdate::DiskType disk, unsigned queries);
 void findOptimal(IndexUpdate::DiskType disk, unsigned queries);
 
+uint64_t globalOpts[16] = {0};
+enum names {
+    gTotalMPostings,
+    gQRate
+};
+
 int main(int argc, char** argv) {
     std::cout.imbue(std::locale(""));
     if(argc >= 2) {
-        unsigned queriesRate = atoi(argv[1]);
-        for (auto queries : {queriesRate}) {
+        globalOpts[gQRate] = atoi(argv[1]);
+        globalOpts[gTotalMPostings] = (argc >= 3) ? 1000ull*1000ull*atoi(argv[2]) :  64ull*1000*1000*1000;
+        for (auto queries : {globalOpts[gQRate]}) {
             std::cout << "===== > " << queries << " HD...\n";
             experiment(HD, queries);
         }
-        for (auto queries : {queriesRate}) {
+        for (auto queries : {globalOpts[gQRate]}) {
             std::cout << "===== > " << queries << " SSD...\n";
             experiment(SSD, queries);
         }
     }
     else {
-        std::cout << "usage: " << argv[0] << "query-rate(>=1)\n";
+        std::cout << "usage: " << argv[0] << " query-rate(>=1)\n";
 //        assert(argc==3);
 //        auto queries = atoi(argv[1]);
 //        std::string disk(argv[2]);
@@ -50,10 +57,11 @@ void experiment(IndexUpdate::DiskType disk, unsigned queries){
 
     std::vector<std::string> reports;
     bool isAsync = true;
-    for(auto percents : {16,32,50,96} ) { //larger percents ==> larger UB ==> less evictions!
+    for(auto percents : {98,99} ) { //larger percents ==> larger UB ==> less evictions!
         settings.flags[0] = percents;
-        settings.updateBufferPostingsLimit = ((1ull << 31) * percents) / 100;
-        settings.cacheSizePostings = (1ull << 31) - settings.updateBufferPostingsLimit;
+        const auto ubsz = (1ull << 32);
+        settings.updateBufferPostingsLimit = (ubsz * percents) / 100;
+        settings.cacheSizePostings = ubsz - settings.updateBufferPostingsLimit;
 
         if(isAsync) {
             settings.flags[1] = 0;
@@ -105,7 +113,7 @@ IndexUpdate::Settings setup(IndexUpdate::DiskType disk, unsigned queriesQuant ) 
     sets.quieriesQuant = queriesQuant;
 
     sets.szOfPostingBytes = 4; //we use fixed size of postings (in bytes).
-    sets.totalExperimentPostings = 64ull*1000*1000*1000;
+    sets.totalExperimentPostings = globalOpts[gTotalMPostings];
     sets.updatesQuant = 1000*1000;
     sets.percentsUBLeft = 25;
 
